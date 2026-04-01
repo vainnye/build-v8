@@ -1,0 +1,99 @@
+name: Build V8 8.9.x
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git curl python3 python3-pip \
+            pkg-config libglib2.0-dev \
+            lsb-release
+
+      - name: Clone depot_tools
+        run: |
+          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git $HOME/depot_tools
+
+      - name: Add depot_tools to PATH
+        run: echo "$HOME/depot_tools" >> $GITHUB_PATH
+
+      - name: Configure gclient for V8 8.9
+        run: |
+          mkdir -p $HOME/v8
+          cd $HOME/v8
+          cat > .gclient << 'EOF'
+          solutions = [
+            {
+              "name"        : "v8",
+              "url"         : "https://chromium.googlesource.com/v8/v8.git@branch-heads/8.9",
+              "deps_file"   : "DEPS",
+              "managed"     : False,
+              "custom_deps" : {},
+            },
+          ]
+          EOF
+
+      - name: Fetch V8 source
+        run: |
+          cd $HOME/v8
+          gclient sync --no-history --with_branch_heads --with_tags -j4
+        env:
+          DEPOT_TOOLS_UPDATE: "0"
+
+      - name: Install build dependencies
+        run: |
+          cd $HOME/v8/v8
+          ./build/install-build-deps.sh --no-prompt --no-chromeos-fonts
+
+      - name: Generate build files with gn
+        run: |
+          cd $HOME/v8/v8
+          gn gen out/release --args='
+            is_debug=false
+            target_cpu="x64"
+            v8_monolithic=true
+            v8_use_external_startup_data=false
+            is_component_build=false
+            use_custom_libcxx=false
+            v8_enable_i18n_support=false
+          '
+
+      - name: Build V8
+        run: |
+          cd $HOME/v8/v8
+          ninja -C out/release v8_monolith -j$(nproc)
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/artifacts/lib
+          mkdir -p $GITHUB_WORKSPACE/artifacts/include
+          cp $HOME/v8/v8/out/release/obj/libv8_monolith.a $GITHUB_WORKSPACE/artifacts/lib/
+          cp -r $HOME/v8/v8/include/* $GITHUB_WORKSPACE/artifacts/include/
+
+      - name: Get V8 version
+        id: v8_version
+        run: |
+          VERSION=$(cat $HOME/v8/v8/include/v8-version.h \
+            | grep -E "^#define V8_(MAJOR|MINOR|BUILD|PATCH)_VERSION" \
+            | awk '{print $3}' \
+            | tr '\n' '.' \
+            | sed 's/\.$//')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Upload V8 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: v8-${{ steps.v8_version.outputs.version }}-linux-x64
+          path: artifacts/
+          retention-days: 30
