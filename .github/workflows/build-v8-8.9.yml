@@ -59,19 +59,13 @@ jobs:
       - name: Generate build files with gn
         run: |
           cd $HOME/v8/v8
-          gn gen out/release --args='
-            is_debug=false
-            target_cpu="x64"
-            v8_monolithic=true
-            v8_use_external_startup_data=false
-            is_component_build=false
-            use_custom_libcxx=false
-            v8_enable_i18n_support=false
-          '
+          # Formatted as a single string to ensure GN parses it correctly
+          gn gen out/release --args='is_debug=false target_cpu="x64" v8_monolithic=true v8_use_external_startup_data=false is_component_build=false use_custom_libcxx=false v8_enable_i18n_support=false'
 
       - name: Build V8
         run: |
           cd $HOME/v8/v8
+          # If this step fails with an out-of-memory error (OOM Kill), change -j$(nproc) to -j2
           ninja -C out/release v8_monolith -j$(nproc)
 
       - name: Collect artifacts
